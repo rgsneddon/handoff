@@ -23,14 +23,20 @@ Use **Command Prompt** (`cmd.exe`) for Windows commands. Use **WSL Ubuntu** for 
 | Work | Where |
 |------|--------|
 | Node, pool, ShearK source, tests, VPS SSH, dest-bind, ADMITv2 native, soak | **This Windows box** (plus WSL for linux/arch zips) |
-| Wallet **0.34** Windows / Linux / Arch GUI+CLI | **This box** |
-| ShearK **2.2** Windows zip | **This box** (linux zip already on GitHub) |
-| macOS DMG (drag-to-Applications) + notarize, iOS | **Mac later** — not blocking Windows work |
+| Wallet **0.34** Windows + Linux + Arch + Android (GUI+CLI where that platform has one) | **This box** |
+| ShearK **2.2** Windows + Linux + Arch | **This box** (WSL or a Linux VPS for ELF; never attach Darwin as linux) |
+| macOS DMG (drag-to-Applications) + notarize, iOS | **MacBook handoff** — not blocking this PC |
 | Validating tip | **`77.42.91.84`** (main node), never this PC |
 
-Mac leftover that is **not** required to continue:
+**Client cut policy (this Windows box, every wallet/miner pin):**
 
-- macOS wallet **0.34** DMG is **not** on the tag yet (only `shear-0.34-macos` CLI + Android APK). Do **not** block Windows zips on that. When a Mac is free: `wallet/pack_macos.sh` with `BUILD_NUMBER=50`, `SYNC_POOL_WALLET=0`, then `gh release upload 0.34 dist/shear-wallet-0.34-macos.dmg` onto **existing** tag **0.34**. Do **not** recut **0.34**.
+- **Wallet:** always pack **Windows + Linux + Arch Linux + Android**. GUI zip + CLI on desktop OSes. Do not skip Android because an older APK is already on the tag — rebuild this pin, then upload onto the **existing** tag. Do **not** recut the tag.
+- **Miner (ShearK):** always pack **Windows + Linux + Arch Linux**. Linux/Arch must be ELF, packed on WSL or a Linux VPS. Do not attach Darwin.
+- **Apple:** **not this box.** Handoff the MacBook to cut macOS DMG (notarize + staple) and iOS. Recipe: `wallet/pack_macos.sh` with `BUILD_NUMBER=50`, `SYNC_POOL_WALLET=0`, then `gh release upload 0.34 dist/shear-wallet-0.34-macos.dmg` onto **existing** tag **0.34**. Do **not** recut **0.34**. Do not block Windows/Linux/Arch/Android on the DMG.
+
+Mac leftover that is **not** required to continue this PC’s cut:
+
+- macOS wallet **0.34** DMG is **not** on the tag yet (only `shear-0.34-macos` CLI). Android is this box’s job now.
 
 ---
 
@@ -434,3 +440,23 @@ ssh -i %USERPROFILE%\.ssh\id_ed25519_restore_privacy_eu root@2.28.8.89
 Do **not** SSH `178.105.187.178` (dead). Do **not** treat `46.224.132.83` as the new install target.
 
 Tip / pool HTTP on the **main** box (`77.42.91.84`): `curl http://127.0.0.1:8088/api/stats` (not `/stats`). RPC if present is loopback only. Do **not** bind RPC to `0.0.0.0`. Soak reorg/reserve/vort1 use **temp stores** (`node node/soak_vps.js reorg|reserve|vort1`).
+
+---
+
+## 6) Next `/goal` after this cut — Full clean paste (**North Star** replaced with **ShearHash-v4**)
+
+Do **not** start this until site+pool+main node are up on **`77.42.91.84`** and satellites **`p2p.shear.digital`** / **`r2r.shear.digital`** are validating. Live paste: [SHEARHASH-V4.md](SHEARHASH-V4.md) (same text as `C:\Users\rgsne\Downloads\shearhash-v4-goal-rejects-hashrate.md`).
+
+**One-line `/goal`:** Abort ShearK in-flight work on new stratum job/restamp (never submit or show it as rejected); keep accurate per-dest hashes-this-round for node hash-bonus minting; fix displayed hashrate to a time-window so block-found round resets cannot phantom-spike H/s — before ShearHash-v4.
+
+This ticket is **not** the ShearHash-v4 consensus / personalisation bump. It clears miner-console spurious rejects and pool H/s spikes while keeping `proven_round` for hash-bonus. Pin stays ShearK **2.2** / `shear-testnet-v4` / ShearHash-v3.
+
+---
+
+## 7) Next `/goal` after ShearK abort + honest H/s — apply security hardening
+
+Source: [GROK-BUILD-APPLY-HARDENING.md](GROK-BUILD-APPLY-HARDENING.md) (same text as `C:\Users\rgsne\Downloads\GROK-BUILD-APPLY-HARDENING.md`).
+
+**One-line `/goal`:** Implement the ranked P0 hardening in `rgsneddon/shear-testnet` (wallet native ADMITv2+BP+ send, Bech32 checksum, split `SHEAR_FAST_SYNC` from `skipSharePow`, admit vectors, P2P eclipse, stratum TLS/auth, dest-ban grief, fee/audit, round-hash integrity) with tests and small PRs — defensive only, no exploit PoCs, no consensus-constant changes.
+
+Do **not** start this until the VPS fleet is up and the ShearK abort / two-meter H/s ticket has shipped (or land P0-3 / P0-2 in parallel if that ticket is blocked). Pin stays `shear-testnet-v4` / ADMITv2 / ShearHash-v3 / ShearK **2.2** / wallet **0.34**.

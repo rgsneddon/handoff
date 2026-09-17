@@ -8,7 +8,7 @@ Full inventory (every GitHub repo, every platform): **[HANDOFF.md](HANDOFF.md)**
 
 **Formatted Windows box (no local repo):** **[WINDOWS.md](WINDOWS.md)** — https://github.com/rgsneddon/handoff/blob/main/WINDOWS.md
 
-**ADMITv2 Windows cut (new work, not the v3 leftover):** **[WINDOWS-ADMITv2.md](WINDOWS-ADMITv2.md)** — https://github.com/rgsneddon/handoff/blob/main/WINDOWS-ADMITv2.md — this box cuts wallet **Windows + Linux + Arch** (pin **0.34**) and ShearK **1.7** Windows + Linux. Do not mix into WINDOWS.md.
+**ADMITv2 Windows cut (new work, not the v3 leftover):** **[WINDOWS-ADMITv2.md](WINDOWS-ADMITv2.md)** — https://github.com/rgsneddon/handoff/blob/main/WINDOWS-ADMITv2.md — this box cuts wallet **Windows + Linux + Arch + Android** (pin **0.34**) and ShearK **2.2** Windows + Linux + Arch. Next `/goal`s after that cut: **[SHEARHASH-V4.md](SHEARHASH-V4.md)** (abort spurious rejects + honest H/s; not the PoW bump), then **[GROK-BUILD-APPLY-HARDENING.md](GROK-BUILD-APPLY-HARDENING.md)** (P0 defensive hardening). Apple DMG/iOS is a MacBook handoff. Do not mix into WINDOWS.md.
 
 Repo: https://github.com/rgsneddon/handoff (private, account `rgsneddon`).
 
