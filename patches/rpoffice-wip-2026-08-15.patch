@@ -1,0 +1,760 @@
+diff --git a/README.md b/README.md
+index 6b4f90a..67ea617 100644
+--- a/README.md
++++ b/README.md
+@@ -1,18 +1,69 @@
+ # rpOffice — Pens · Tables · Slides
+ 
+-Restore Privacy branded standalone programs (free with **rpOS**):
++Restore Privacy branded office suite (free with **rpOS**). Corel-style suite hub plus three pillar apps with desktop GUI.
+ 
+-| Brand | Class | Launch |
+-|-------|-------|--------|
+-| **Pens** | documents | `python3 -m rpoffice.apps.pens --smoke` |
+-| **Tables** | spreadsheets | `python3 -m rpoffice.apps.tables --smoke` |
+-| **Slides** | presentations | `python3 -m rpoffice.apps.slides --smoke` |
++| Brand | Role | Launch |
++|-------|------|--------|
++| **Pens** | Documents | `./launchers/Pens` or `python3 -m rpoffice.apps.pens` |
++| **Tables** | Spreadsheets | `./launchers/Tables` or `python3 -m rpoffice.apps.tables` |
++| **Slides** | Presentations | `./launchers/Slides` or `python3 -m rpoffice.apps.slides` |
++| **rpOffice** | Suite hub | `./launchers/rpOffice` or `python3 -m rpoffice` |
++
++Icons: `assets/icons/{rpoffice,pens,tables,slides}.png`
+ 
+ Not Microsoft Word / Excel / PowerPoint brand names.
+ 
++## Requirements
++
++- Python 3.10+ with **tkinter** (macOS: `brew install python-tk@3.14` for Homebrew Python, or use `/usr/bin/python3`)
++
++## Quick start
++
+ ```bash
+-python3 -m rpoffice --smoke
++cd rpOffice
++export PYTHONPATH=.
++./launchers/rpOffice          # suite hub GUI
++./launchers/Pens              # document editor
++./launchers/Tables            # spreadsheet
++./launchers/Slides            # presentations
++
++# Headless exercise (same controller path as GUI)
++python3 -m rpoffice --exercise
++python3 -m rpoffice.apps.pens --exercise
++python3 -m rpoffice.apps.tables --exercise
++python3 -m rpoffice.apps.slides --exercise
++
+ python3 -m unittest discover -s tests -v
+ ```
+ 
++## Architecture
++
++- **Models** (`rpoffice.word` / `sheet` / `deck`): document truth, formulas, slide reorder
++- **Pens** expansive documents: character/paragraph formatting, named styles, page setup, headers/footers, variables, structure **codes** view
++- **Native format:** `.rPen` (ZIP package with `META-INF/rpen.json` magic + `content.json`)
++- **Interchange:** `.docx`, `.pdf`, `.txt`, `.rtf`, `.odt`, `.html`, `.md`, partial `.doc`; legacy `.json`
++- **Controllers** (`rpoffice.controllers.*`): thin edit/save/load used by GUI and `--exercise`
++- **GUI** (`rpoffice.gui.*`): Tk suite hub + three app windows with branded icons
++
++```bash
++python3 -m rpoffice.apps.pens --formats   # list open/save types
++python3 -m rpoffice.apps.pens --exercise  # formatting + .rPen + interchange
++```
++
+ MIT — see LICENSE.
++
++## Pens multi-platform packages
++
++```bash
++python3 scripts/package_pens_platforms.py
++# → dist/pens/<version>/pens-*-macos.zip
++#                 pens-*-windows-x64.zip
++#                 pens-*-linux-x86_64.zip
++#                 pens-*-linux-aarch64.zip
++#                 pens-*-all-platforms.zip
++```
++
++Install (Unix): `bash install.sh` → `~/.rpos/install/bin/Pens`  
++Install (Windows): `install.ps1` or `install.cmd` → `%USERPROFILE%\.rpos\install\bin\Pens.cmd`  
++
++Requires Python 3.10+ (tkinter for GUI). Desktop only (not iOS/Android).
+diff --git a/pyproject.toml b/pyproject.toml
+index 7b02002..56e874c 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,12 +1,15 @@
+ [project]
+ name = "rpoffice"
+-version = "0.1.0"
+-description = "rpOffice — Restore Privacy Office suite (word/sheet/deck)"
++version = "0.5.0"
++description = "rpOffice — Restore Privacy Office suite (Pens · Tables · Slides GUI)"
+ requires-python = ">=3.10"
+ license = { text = "MIT" }
+ 
+ [project.scripts]
+ rpoffice = "rpoffice.__main__:main"
++pens = "rpoffice.apps.pens:main"
++tables = "rpoffice.apps.tables:main"
++slides = "rpoffice.apps.slides:main"
+ 
+ [tool.setuptools.packages.find]
+ include = ["rpoffice*"]
+diff --git a/rpoffice/__init__.py b/rpoffice/__init__.py
+index be2bf65..b5f6419 100644
+--- a/rpoffice/__init__.py
++++ b/rpoffice/__init__.py
+@@ -2,7 +2,7 @@
+ 
+ from .brand import APP_ORDER, PENS, PRODUCT_FAMILY, SLIDES, SUITE_NAME, TABLES
+ 
+-__version__ = "0.3.0"
++__version__ = "0.5.0"
+ PRODUCT_NAME = SUITE_NAME
+ MODULE_NAMES = ("word", "sheet", "deck")  # domain modules
+ BRAND_NAMES = APP_ORDER
+diff --git a/rpoffice/__main__.py b/rpoffice/__main__.py
+index 695fbc9..4432fbd 100644
+--- a/rpoffice/__main__.py
++++ b/rpoffice/__main__.py
+@@ -1,4 +1,4 @@
+-"""CLI entry for rpOffice — Pens · Tables · Slides."""
++"""CLI entry for rpOffice — Pens · Tables · Slides suite hub."""
+ 
+ from __future__ import annotations
+ 
+@@ -9,7 +9,7 @@ from . import PRODUCT_NAME, __version__
+ from .apps import pens, slides, tables
+ from .brand import PENS, SLIDES, TABLES
+ from .parity_scope import matrix_as_dict, required_pillars_present
+-from .shell import create, suite_status
++from .shell import suite_status
+ 
+ 
+ def smoke() -> dict:
+@@ -21,7 +21,6 @@ def smoke() -> dict:
+         TABLES: tables.smoke(),
+         SLIDES: slides.smoke(),
+     }
+-    # Ensure primary brands present
+     status["brands_ok"] = status["brands"] == [PENS, TABLES, SLIDES]
+     status["parity"] = matrix_as_dict()
+     status["smoke"] = True
+@@ -33,6 +32,9 @@ def main(argv: list[str] | None = None) -> int:
+     ap.add_argument("--version", action="store_true")
+     ap.add_argument("--smoke", action="store_true")
+     ap.add_argument("--parity", action="store_true")
++    ap.add_argument("--exercise", action="store_true", help="headless hub + controller exercise")
++    ap.add_argument("--gui", action="store_true", help="open suite hub GUI")
++    ap.add_argument("--hub", action="store_true", help="alias for --gui")
+     args = ap.parse_args(argv)
+     if args.version:
+         print(f"{PRODUCT_NAME} {__version__} ({PENS} · {TABLES} · {SLIDES})")
+@@ -43,8 +45,23 @@ def main(argv: list[str] | None = None) -> int:
+     if args.smoke:
+         print(json.dumps(smoke(), indent=2, default=str))
+         return 0
+-    ap.print_help()
+-    return 0
++    if args.exercise:
++        from .gui.hub import exercise
++
++        print(json.dumps(exercise(), indent=2, default=str))
++        return 0
++    if args.gui or args.hub:
++        from .gui.hub import main as hub_main
++
++        return hub_main([])
++    # Default: open suite hub GUI (Corel-style launch surface)
++    try:
++        from .gui.hub import main as hub_main
++
++        return hub_main([])
++    except Exception:
++        ap.print_help()
++        return 0
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/rpoffice/apps/pens.py b/rpoffice/apps/pens.py
+index d330b5d..358ab47 100644
+--- a/rpoffice/apps/pens.py
++++ b/rpoffice/apps/pens.py
+@@ -7,7 +7,15 @@ import json
+ 
+ from .. import __version__
+ from ..brand import PENS, PRODUCT_FAMILY
+-from ..word import create_document
++from ..controllers.pens_controller import PensController
++from ..word import (
++    DEFAULT_SAVE_EXTENSION,
++    EXPORT_EXTENSIONS,
++    IMPORT_EXTENSIONS,
++    create_document,
++    file_type_filters_open,
++    file_type_filters_save,
++)
+ 
+ 
+ def smoke() -> dict:
+@@ -23,19 +31,61 @@ def smoke() -> dict:
+         "title": again.title,
+         "paragraphs": len(again.paragraphs),
+         "body_len": len(again.body),
++        "native_extension": DEFAULT_SAVE_EXTENSION,
+     }
+ 
+ 
++def exercise() -> dict:
++    """Same controller path the GUI buttons use."""
++    return PensController().exercise()
++
++
+ def main(argv: list[str] | None = None) -> int:
+-    ap = argparse.ArgumentParser(prog="pens", description=f"{PENS} — Restore Privacy documents")
++    ap = argparse.ArgumentParser(
++        prog="pens",
++        description=f"{PENS} — expansive documents (native {DEFAULT_SAVE_EXTENSION})",
++    )
+     ap.add_argument("--version", action="store_true")
+     ap.add_argument("--smoke", action="store_true")
++    ap.add_argument("--exercise", action="store_true", help="headless controller exercise (GUI path)")
++    ap.add_argument("--gui", action="store_true", help="open Pens desktop window")
++    ap.add_argument(
++        "--formats",
++        action="store_true",
++        help="list native and interchange open/save formats",
++    )
+     args = ap.parse_args(argv)
+     if args.version:
+         print(f"{PENS} {__version__}")
+         return 0
+-    print(json.dumps(smoke(), indent=2))
+-    return 0
++    if args.formats:
++        info = {
++            "product": PENS,
++            "native_extension": DEFAULT_SAVE_EXTENSION,
++            "import_extensions": list(IMPORT_EXTENSIONS),
++            "export_extensions": list(EXPORT_EXTENSIONS),
++            "open_filters": file_type_filters_open(),
++            "save_filters": file_type_filters_save(),
++        }
++        print(json.dumps(info, indent=2))
++        return 0
++    if args.exercise:
++        print(json.dumps(exercise(), indent=2))
++        return 0
++    if args.gui:
++        from ..gui.pens_window import main as gui_main
++
++        return gui_main([])
++    if args.smoke:
++        print(json.dumps(smoke(), indent=2))
++        return 0
++    try:
++        from ..gui.pens_window import main as gui_main
++
++        return gui_main([])
++    except Exception:
++        print(json.dumps(smoke(), indent=2))
++        return 0
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/rpoffice/apps/slides.py b/rpoffice/apps/slides.py
+index 1c07e39..7341bd1 100644
+--- a/rpoffice/apps/slides.py
++++ b/rpoffice/apps/slides.py
+@@ -7,6 +7,7 @@ import json
+ 
+ from .. import __version__
+ from ..brand import PRODUCT_FAMILY, SLIDES
++from ..controllers.slides_controller import SlidesController
+ from ..deck import create_presentation
+ 
+ 
+@@ -26,16 +27,37 @@ def smoke() -> dict:
+     }
+ 
+ 
++def exercise() -> dict:
++    return SlidesController().exercise()
++
++
+ def main(argv: list[str] | None = None) -> int:
+     ap = argparse.ArgumentParser(prog="slides", description=f"{SLIDES} — Restore Privacy presentations")
+     ap.add_argument("--version", action="store_true")
+     ap.add_argument("--smoke", action="store_true")
++    ap.add_argument("--exercise", action="store_true")
++    ap.add_argument("--gui", action="store_true")
+     args = ap.parse_args(argv)
+     if args.version:
+         print(f"{SLIDES} {__version__}")
+         return 0
+-    print(json.dumps(smoke(), indent=2))
+-    return 0
++    if args.exercise:
++        print(json.dumps(exercise(), indent=2))
++        return 0
++    if args.gui:
++        from ..gui.slides_window import main as gui_main
++
++        return gui_main([])
++    if args.smoke:
++        print(json.dumps(smoke(), indent=2))
++        return 0
++    try:
++        from ..gui.slides_window import main as gui_main
++
++        return gui_main([])
++    except Exception:
++        print(json.dumps(smoke(), indent=2))
++        return 0
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/rpoffice/apps/tables.py b/rpoffice/apps/tables.py
+index 13ce96c..2272768 100644
+--- a/rpoffice/apps/tables.py
++++ b/rpoffice/apps/tables.py
+@@ -7,6 +7,7 @@ import json
+ 
+ from .. import __version__
+ from ..brand import PRODUCT_FAMILY, TABLES
++from ..controllers.tables_controller import TablesController
+ from ..sheet import create_spreadsheet
+ 
+ 
+@@ -27,16 +28,37 @@ def smoke() -> dict:
+     }
+ 
+ 
++def exercise() -> dict:
++    return TablesController().exercise()
++
++
+ def main(argv: list[str] | None = None) -> int:
+     ap = argparse.ArgumentParser(prog="tables", description=f"{TABLES} — Restore Privacy spreadsheets")
+     ap.add_argument("--version", action="store_true")
+     ap.add_argument("--smoke", action="store_true")
++    ap.add_argument("--exercise", action="store_true")
++    ap.add_argument("--gui", action="store_true")
+     args = ap.parse_args(argv)
+     if args.version:
+         print(f"{TABLES} {__version__}")
+         return 0
+-    print(json.dumps(smoke(), indent=2))
+-    return 0
++    if args.exercise:
++        print(json.dumps(exercise(), indent=2))
++        return 0
++    if args.gui:
++        from ..gui.tables_window import main as gui_main
++
++        return gui_main([])
++    if args.smoke:
++        print(json.dumps(smoke(), indent=2))
++        return 0
++    try:
++        from ..gui.tables_window import main as gui_main
++
++        return gui_main([])
++    except Exception:
++        print(json.dumps(smoke(), indent=2))
++        return 0
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/rpoffice/parity_scope.py b/rpoffice/parity_scope.py
+index df1e4ab..5035137 100644
+--- a/rpoffice/parity_scope.py
++++ b/rpoffice/parity_scope.py
+@@ -11,6 +11,8 @@ OFFICE_PILLARS: tuple[str, ...] = OFFICE_PILLARS_BRANDED
+ 
+ OFFICE_PARITY_MATRIX: list[dict[str, str]] = [
+     {"pillar": PENS, "feature": "Document body + styles + serialize round-trip", "status": "implemented", "analogue": "Word-class"},
++    {"pillar": PENS, "feature": "Character/paragraph formatting, page setup, variables, codes view", "status": "implemented", "analogue": "Word-class"},
++    {"pillar": PENS, "feature": "Native .rPen package + docx/pdf/txt/rtf/odt interchange", "status": "implemented", "analogue": "Word-class"},
+     {"pillar": TABLES, "feature": "Grid cells + simple formula evaluation", "status": "implemented", "analogue": "Excel-class"},
+     {"pillar": SLIDES, "feature": "Multi-slide create/reorder/serialize", "status": "implemented", "analogue": "PowerPoint-class"},
+     {"pillar": PENS, "feature": "Paragraph list / headings", "status": "partial", "analogue": "Word-class"},
+diff --git a/rpoffice/word/__init__.py b/rpoffice/word/__init__.py
+index 339a17c..8e214c9 100644
+--- a/rpoffice/word/__init__.py
++++ b/rpoffice/word/__init__.py
+@@ -1,68 +1,117 @@
+-"""Word-processor document model (from-scratch Office Word pillar)."""
++"""Pens document pillar — expansive model, .rPen native format, interchange."""
+ 
+-from __future__ import annotations
++from .interchange import (
++    EXPORT_EXTENSIONS,
++    FORMAT_LABELS,
++    IMPORT_EXTENSIONS,
++    InterchangeError,
++    export_bytes,
++    export_docx,
++    export_html,
++    export_md,
++    export_odt,
++    export_pdf,
++    export_rtf,
++    export_txt,
++    file_type_filters_open,
++    file_type_filters_save,
++    import_bytes,
++    import_docx,
++    import_html,
++    import_md,
++    import_odt,
++    import_pdf,
++    import_rtf,
++    import_txt,
++    load_document,
++    plain_body,
++    save_document,
++)
++from .fonts import (
++    DEFAULT_FONT_FAMILY,
++    RPEN_FONT_FAMILIES,
++    catalog_size,
++    font_catalog,
++    is_catalog_font,
++    normalize_font_family,
++)
++from .model import (
++    CharFormat,
++    Document,
++    HeaderFooter,
++    PageSetup,
++    ParaFormat,
++    Paragraph,
++    StyleDef,
++    TextRun,
++    create_document,
++    default_style_sheet,
++    parse_editor_line,
++)
++from .rpen import (
++    DEFAULT_SAVE_EXTENSION,
++    NATIVE_EXTENSION,
++    RPEN_MAGIC,
++    RPEN_MIME,
++    RPenError,
++    detect_rpen,
++    dumps_rpen,
++    load_rpen,
++    loads_rpen,
++    save_rpen,
++)
+ 
+-import json
+-import uuid
+-from dataclasses import asdict, dataclass, field
+-from typing import Any
+-
+-
+-@dataclass
+-class Paragraph:
+-    text: str
+-    style: str = "Normal"  # Normal | Heading1 | Heading2 | Quote
+-
+-
+-@dataclass
+-class Document:
+-    title: str
+-    body: str = ""
+-    paragraphs: list[Paragraph] = field(default_factory=list)
+-    styles: dict[str, Any] = field(default_factory=lambda: {"theme": "default", "font": "system"})
+-    doc_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+-
+-    def add_paragraph(self, text: str, style: str = "Normal") -> Paragraph:
+-        p = Paragraph(text=text, style=style)
+-        self.paragraphs.append(p)
+-        # Keep body in sync for simple consumers
+-        self.body = "\n".join(x.text for x in self.paragraphs)
+-        return p
+-
+-    def to_dict(self) -> dict[str, Any]:
+-        return {
+-            "kind": "word",
+-            "title": self.title,
+-            "body": self.body,
+-            "paragraphs": [asdict(p) for p in self.paragraphs],
+-            "styles": dict(self.styles),
+-            "doc_id": self.doc_id,
+-        }
+-
+-    def dumps(self) -> str:
+-        return json.dumps(self.to_dict(), indent=2, sort_keys=True)
+-
+-    @classmethod
+-    def loads(cls, raw: str) -> "Document":
+-        data = json.loads(raw)
+-        paras = [
+-            Paragraph(text=str(p.get("text") or ""), style=str(p.get("style") or "Normal"))
+-            for p in (data.get("paragraphs") or [])
+-        ]
+-        doc = cls(
+-            title=str(data.get("title") or "Untitled"),
+-            body=str(data.get("body") or ""),
+-            paragraphs=paras,
+-            styles=dict(data.get("styles") or {}),
+-            doc_id=str(data.get("doc_id") or uuid.uuid4().hex[:12]),
+-        )
+-        if not doc.paragraphs and doc.body:
+-            doc.paragraphs = [Paragraph(text=doc.body)]
+-        return doc
+-
+-
+-def create_document(title: str = "Untitled", body: str = "") -> Document:
+-    d = Document(title=title, body=body)
+-    if body:
+-        d.paragraphs = [Paragraph(text=body)]
+-    return d
++__all__ = [
++    "CharFormat",
++    "Document",
++    "HeaderFooter",
++    "PageSetup",
++    "ParaFormat",
++    "Paragraph",
++    "StyleDef",
++    "TextRun",
++    "create_document",
++    "default_style_sheet",
++    "parse_editor_line",
++    "DEFAULT_FONT_FAMILY",
++    "RPEN_FONT_FAMILIES",
++    "font_catalog",
++    "catalog_size",
++    "is_catalog_font",
++    "normalize_font_family",
++    "DEFAULT_SAVE_EXTENSION",
++    "NATIVE_EXTENSION",
++    "RPEN_MAGIC",
++    "RPEN_MIME",
++    "RPenError",
++    "detect_rpen",
++    "dumps_rpen",
++    "load_rpen",
++    "loads_rpen",
++    "save_rpen",
++    "EXPORT_EXTENSIONS",
++    "IMPORT_EXTENSIONS",
++    "FORMAT_LABELS",
++    "InterchangeError",
++    "export_bytes",
++    "export_docx",
++    "export_html",
++    "export_md",
++    "export_odt",
++    "export_pdf",
++    "export_rtf",
++    "export_txt",
++    "import_bytes",
++    "import_docx",
++    "import_html",
++    "import_md",
++    "import_odt",
++    "import_pdf",
++    "import_rtf",
++    "import_txt",
++    "load_document",
++    "save_document",
++    "plain_body",
++    "file_type_filters_open",
++    "file_type_filters_save",
++]
+diff --git a/tests/test_rpoffice.py b/tests/test_rpoffice.py
+index 5d22eec..52ee2e8 100644
+--- a/tests/test_rpoffice.py
++++ b/tests/test_rpoffice.py
+@@ -1,8 +1,10 @@
+-"""Unit tests for rpOffice Pens · Tables · Slides."""
++"""Unit tests for rpOffice Pens · Tables · Slides (models + controllers + entry paths)."""
+ 
+ from __future__ import annotations
+ 
++import json
+ import sys
++import tempfile
+ import unittest
+ from pathlib import Path
+ 
+@@ -13,8 +15,15 @@ from rpoffice import BRAND_NAMES, PRODUCT_NAME, __version__  # noqa: E402
+ from rpoffice.__main__ import main, smoke  # noqa: E402
+ from rpoffice.apps import pens, slides, tables  # noqa: E402
+ from rpoffice.brand import PENS, SLIDES, TABLES, primary_app_names  # noqa: E402
++from rpoffice.controllers import PensController, SlidesController, TablesController  # noqa: E402
++from rpoffice.gui.hub import exercise as hub_exercise  # noqa: E402
++from rpoffice.gui.hub import hub_status  # noqa: E402
++from rpoffice.gui.icons import all_icons_exist, icon_map, icon_path  # noqa: E402
+ from rpoffice.parity_scope import OFFICE_PILLARS, implemented_pillars, required_pillars_present  # noqa: E402
+ from rpoffice.shell import create, suite_status  # noqa: E402
++from rpoffice.word import Document  # noqa: E402
++from rpoffice.sheet import Spreadsheet  # noqa: E402
++from rpoffice.deck import Presentation  # noqa: E402
+ 
+ 
+ class TestBrands(unittest.TestCase):
+@@ -26,7 +35,6 @@ class TestBrands(unittest.TestCase):
+             self.assertIn(p, implemented_pillars())
+         st = suite_status()
+         self.assertEqual(st["brands"], ["Pens", "Tables", "Slides"])
+-        # Must not use Microsoft names as primary brands list
+         self.assertNotIn("Word", st["brands"])
+         self.assertNotIn("Excel", st["brands"])
+         self.assertNotIn("PowerPoint", st["brands"])
+@@ -47,14 +55,102 @@ class TestStandaloneApps(unittest.TestCase):
+         self.assertEqual(tables.main(["--version"]), 0)
+         self.assertEqual(slides.main(["--version"]), 0)
+ 
++    def test_entry_exercise_paths(self) -> None:
++        """Real app entry --exercise uses controllers (same path as GUI)."""
++        self.assertEqual(pens.main(["--exercise"]), 0)
++        self.assertEqual(tables.main(["--exercise"]), 0)
++        self.assertEqual(slides.main(["--exercise"]), 0)
++        pe = pens.exercise()
++        self.assertTrue(pe["ok"])
++        self.assertTrue(pe["has_second"])
++        self.assertIn("Second paragraph", pe["body"])
++        te = tables.exercise()
++        self.assertTrue(te["ok"])
++        self.assertEqual(te["formula_A1_plus_B1"], 15.0)
++        self.assertEqual(te["sum_A1_A2"], 13.0)
++        se = slides.exercise()
++        self.assertTrue(se["ok"])
++        self.assertGreaterEqual(se["slide_count"], 3)
++        self.assertEqual(se["titles_after"][1], "Close")
++
++
++class TestControllers(unittest.TestCase):
++    def test_pens_edit_save_load(self) -> None:
++        c = PensController("Memo")
++        c.set_body_text("Line one\nLine two\nLine three")
++        c.add_paragraph("Footer", style="Quote")
++        raw = c.dumps()
++        again = Document.loads(raw)
++        self.assertEqual(len(again.paragraphs), 4)
++        self.assertIn("Line two", again.body)
++        with tempfile.TemporaryDirectory() as td:
++            path = Path(td) / "doc.json"
++            c.save(path)
++            c2 = PensController()
++            c2.load(path)
++            self.assertEqual(c2.body_text().split("\n")[1], "Line two")
++            self.assertEqual(c2.title, "Memo")
++
++    def test_tables_formula_roundtrip(self) -> None:
++        c = TablesController("Budget")
++        c.set_cell(0, 0, 10)
++        c.set_cell(0, 1, 5)
++        self.assertEqual(c.evaluate("=A1+B1"), 15.0)
++        self.assertEqual(c.evaluate("=SUM(A1:B1)"), 15.0)
++        with tempfile.TemporaryDirectory() as td:
++            path = Path(td) / "sheet.json"
++            c.save(path)
++            c2 = TablesController()
++            c2.load(path)
++            self.assertEqual(c2.evaluate("=A1+B1"), 15.0)
++            self.assertEqual(Spreadsheet.loads(path.read_text()).get_cell(0, 0), 10)
++
++    def test_tables_clear_cell_sync_visible_grid(self) -> None:
++        """Empty UI cells must clear the model (eval/save match the grid)."""
++        c = TablesController("ClearMe")
++        c.set_cell(0, 0, 10)
++        c.set_cell(0, 1, 5)
++        self.assertEqual(c.evaluate("=A1+B1"), 15.0)
++        # Simulate grid after user clears A1 (empty string in visible cell)
++        grid = [["" for _ in range(5)] for _ in range(8)]
++        grid[0][0] = ""  # cleared A1
++        grid[0][1] = "5"
++        c.sync_visible_grid(grid)
++        self.assertIn(c.get_cell(0, 0), ("", None, 0))
++        # _numeric treats "" as 0.0 → formula becomes 0+5
++        self.assertEqual(c.evaluate("=A1+B1"), 5.0)
++        with tempfile.TemporaryDirectory() as td:
++            path = Path(td) / "cleared.json"
++            c.save(path)
++            loaded = Spreadsheet.loads(path.read_text(encoding="utf-8"))
++            # Saved value must not still be 10
++            self.assertNotEqual(loaded.get_cell(0, 0), 10)
++            self.assertEqual(loaded.evaluate("=A1+B1"), 5.0)
++
++    def test_slides_reorder_roundtrip(self) -> None:
++        c = SlidesController("Deck")
++        c.add_slide("A", "a")
++        c.add_slide("B", "b")
++        c.add_slide("C", "c")
++        # [Title, A, B, C] -> move C to index 1
++        c.reorder_slide(c.slide_count() - 1, 1)
++        self.assertEqual(c.titles()[1], "C")
++        raw = c.dumps()
++        again = Presentation.loads(raw)
++        self.assertEqual([s.title for s in again.slides][1], "C")
++        with tempfile.TemporaryDirectory() as td:
++            path = Path(td) / "deck.json"
++            c.save(path)
++            c2 = SlidesController()
++            c2.load(path)
++            self.assertEqual(c2.titles()[1], "C")
++
+ 
+ class TestShell(unittest.TestCase):
+     def test_create_by_brand_alias(self) -> None:
+-        # Explicit title is preserved; brand alias still maps to document domain
+         d = create("pens", "Memo")
+         self.assertEqual(d.title, "Memo")
+         self.assertTrue(hasattr(d, "add_paragraph"))
+-        # Default titles include brand name
+         d2 = create("pens")
+         self.assertIn("Pens", d2.title)
+         sh = create("tables")
+@@ -72,6 +168,44 @@ class TestShell(unittest.TestCase):
+         self.assertEqual(r["apps"]["Tables"]["formula_A1_plus_B1"], 15.0)
+         self.assertGreaterEqual(r["apps"]["Slides"]["slide_count"], 2)
+         self.assertEqual(main(["--smoke"]), 0)
++        self.assertEqual(main(["--exercise"]), 0)
++
++
++class TestHubAndIcons(unittest.TestCase):
++    def test_icons_exist_and_referenced(self) -> None:
++        self.assertTrue(all_icons_exist())
++        m = icon_map()
++        for brand in (PRODUCT_NAME, PENS, TABLES, SLIDES):
++            # PRODUCT_NAME is rpOffice
++            p = Path(m[brand] if brand in m else icon_path(brand))
++            self.assertTrue(p.is_file(), msg=str(p))
++            self.assertGreater(p.stat().st_size, 100)
++        # Hub status exposes three apps + icons
++        st = hub_status()
++        self.assertEqual(st["product"], "rpOffice")
++        self.assertEqual(st["apps"], ["Pens", "Tables", "Slides"])
++        self.assertTrue(st["icons_ok"])
++        for b in ("Pens", "Tables", "Slides"):
++            self.assertIn(b, st["icons"])
++            self.assertTrue(Path(st["icons"][b]).is_file())
++
++    def test_hub_exercise(self) -> None:
++        st = hub_exercise()
++        self.assertTrue(st["ok"])
++        self.assertEqual(st["product"], "rpOffice")
++        self.assertIn("Pens", st["apps"])
++        self.assertTrue(st["pens"]["has_second"])
++        self.assertEqual(st["tables"]["formula_A1_plus_B1"], 15.0)
++        self.assertEqual(st["slides"]["titles_after"][1], "Close")
++
++    def test_launchers_exist(self) -> None:
++        launchers = ROOT / "launchers"
++        for name in ("rpOffice", "Pens", "Tables", "Slides"):
++            p = launchers / name
++            self.assertTrue(p.is_file(), msg=str(p))
++            text = p.read_text(encoding="utf-8")
++            self.assertIn("PYTHONPATH", text)
++            self.assertIn("rpoffice", text)
+ 
+ 
+ if __name__ == "__main__":

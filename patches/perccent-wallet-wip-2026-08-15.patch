@@ -1,0 +1,607 @@
+diff --git a/android/app/src/main/AndroidManifest.xml b/android/app/src/main/AndroidManifest.xml
+index 58a3100..e3ad8a6 100644
+--- a/android/app/src/main/AndroidManifest.xml
++++ b/android/app/src/main/AndroidManifest.xml
+@@ -8,7 +8,8 @@
+     <application
+         android:label="MY PERC"
+         android:name="${applicationName}"
+-        android:icon="@mipmap/ic_launcher">
++        android:icon="@mipmap/ic_launcher"
++        android:networkSecurityConfig="@xml/network_security_config">
+         <activity
+             android:name=".MainActivity"
+             android:exported="true"
+diff --git a/lib/perc/providers/perc_wallet_provider.dart b/lib/perc/providers/perc_wallet_provider.dart
+index 3bee5d2..b39cba5 100644
+--- a/lib/perc/providers/perc_wallet_provider.dart
++++ b/lib/perc/providers/perc_wallet_provider.dart
+@@ -91,10 +91,7 @@ class PercWalletProvider extends ChangeNotifier {
+   bool get registrationAwaitingSeedAlignment =>
+       _registrationAwaitingSeedAlignment;
+   bool get isWalletConnectComplete =>
+-      hasAppAccess &&
+-      !_postLoginSyncing &&
+-      !_pendingSeedSetup &&
+-      !_registrationAwaitingSeedAlignment;
++      hasAppAccess && !_postLoginSyncing && !_pendingSeedSetup;
+   bool get sessionTimedOut => _sessionTimedOut;
+   bool get isBlockchainLaunched => _ledger.isBlockchainLaunched;
+   bool get isLoggedIn => _ledger.isLoggedIn;
+@@ -463,6 +460,12 @@ class PercWalletProvider extends ChangeNotifier {
+       _seedSetupUsername = null;
+       _seedSetupMnemonic = null;
+       _seedSetupPassword = null;
++      _materializeLocalRegistrationAccount(
++        username: username,
++        password: password,
++        seedMnemonic: mnemonic,
++      );
++      _postLoginSyncing = false;
+       _armSessionTimeout();
+       notifyListeners();
+       await _completeRegistrationSessionStart(
+@@ -608,7 +611,6 @@ class PercWalletProvider extends ChangeNotifier {
+     required String statusKey,
+     List<String>? seedMnemonic,
+   }) async {
+-    _postLoginSyncing = true;
+     _registrationAwaitingSeedAlignment = false;
+     notifyListeners();
+     try {
+@@ -618,6 +620,64 @@ class PercWalletProvider extends ChangeNotifier {
+         seedMnemonic: seedMnemonic,
+       );
+ 
++      _materializeLocalRegistrationAccount(
++        username: username,
++        password: password,
++        seedMnemonic: seedMnemonic,
++      );
++      await PercLedgerHub.instance.persistLocal();
++      _postLoginSyncing = false;
++      notifyListeners();
++
++      if (sessionTimeoutEnabled) {
++        unawaited(
++          _adoptRegistrationChain(
++            username: username,
++            password: password,
++            seedMnemonic: seedMnemonic,
++            statusKey: statusKey,
++          ),
++        );
++      } else {
++        await _adoptRegistrationChain(
++          username: username,
++          password: password,
++          seedMnemonic: seedMnemonic,
++          statusKey: statusKey,
++        );
++      }
++    } finally {
++      _postLoginSyncing = false;
++      notifyListeners();
++    }
++  }
++
++  void _materializeLocalRegistrationAccount({
++    required String username,
++    required String password,
++    List<String>? seedMnemonic,
++  }) {
++    final existing = _ledger.accounts[username];
++    if (existing == null || !existing.passwordSet) {
++      if (existing != null) _ledger.accounts.remove(username);
++      _ledger.register(username, password);
++    }
++    _ledger.login(username, password);
++    if (seedMnemonic != null && seedMnemonic.isNotEmpty) {
++      _ledger.attachSeedRecoveryEnvelope(
++        username: username,
++        mnemonic: seedMnemonic,
++      );
++    }
++  }
++
++  Future<void> _adoptRegistrationChain({
++    required String username,
++    required String password,
++    required String statusKey,
++    List<String>? seedMnemonic,
++  }) async {
++    try {
+       final adoption =
+           await PercLedgerHub.instance.adoptSeedChainForRegistration(
+         username: username,
+@@ -651,8 +711,9 @@ class PercWalletProvider extends ChangeNotifier {
+           },
+         );
+       }
++    } catch (_) {
++      // Background tip adopt must not undo local registration.
+     } finally {
+-      _postLoginSyncing = false;
+       notifyListeners();
+     }
+   }
+diff --git a/lib/perc/services/perc_network_client.dart b/lib/perc/services/perc_network_client.dart
+index cf8ff8b..7c428b2 100644
+--- a/lib/perc/services/perc_network_client.dart
++++ b/lib/perc/services/perc_network_client.dart
+@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
+ import '../perc_chain_constants.dart';
+ import 'perc_ledger.dart';
+ import 'perc_network_protocol.dart';
++import 'perc_public_endpoint.dart';
+ 
+ /// HTTP client for Perccent wallet-node sync.
+ class PercNetworkClient {
+@@ -20,6 +21,9 @@ class PercNetworkClient {
+   /// Probes seed/rendezvous reachability. Uses a cold-start-tolerant timeout and
+   /// retry budget so free-tier hosts are not reported as offline while waking.
+   Future<PercNetworkStatus?> fetchStatus(String endpoint) async {
++    if (PercPublicEndpoint.isUnreachableCleartextPublicNode(endpoint)) {
++      return null;
++    }
+     final uri = _resolve(endpoint, _statusPath);
+     if (uri == null) return null;
+     try {
+@@ -39,6 +43,9 @@ class PercNetworkClient {
+   }
+ 
+   Future<PercLedger?> fetchLedger(String endpoint) async {
++    if (PercPublicEndpoint.isUnreachableCleartextPublicNode(endpoint)) {
++      return null;
++    }
+     final uri = _resolve(endpoint, _ledgerPath);
+     if (uri == null) return null;
+     try {
+@@ -55,6 +62,9 @@ class PercNetworkClient {
+     required String endpoint,
+     required PercLedger ledger,
+   }) async {
++    if (PercPublicEndpoint.isUnreachableCleartextPublicNode(endpoint)) {
++      return false;
++    }
+     final uri = _resolve(endpoint, _ledgerPath);
+     if (uri == null) return false;
+     for (var i = 0; i < 3; i++) {
+diff --git a/lib/perc/services/perc_network_coordinator.dart b/lib/perc/services/perc_network_coordinator.dart
+index 7bf047b..1ea38c1 100644
+--- a/lib/perc/services/perc_network_coordinator.dart
++++ b/lib/perc/services/perc_network_coordinator.dart
+@@ -99,6 +99,16 @@ class PercNetworkCoordinator extends ChangeNotifier {
+     instance._detach();
+   }
+ 
++  /// Inject the shipped HTTP client/rendezvous so tests drive the real path.
++  @visibleForTesting
++  void useHttpStackForTest({
++    PercNetworkClient? client,
++    PercNetworkRendezvous? rendezvous,
++  }) {
++    if (client != null) _client = client;
++    if (rendezvous != null) _rendezvous = rendezvous;
++  }
++
+   /// Install a fake/injectable HTTP client for seed connectivity tests.
+   @visibleForTesting
+   void installNetworkClientForTest(PercNetworkClient client) {
+@@ -1065,9 +1075,14 @@ class PercNetworkCoordinator extends ChangeNotifier {
+ 
+     if (!quick && targetHeight > PercChainTip.height(hub.ledger)) {
+       var imported = false;
+-      if (importEndpoint != null &&
+-          PercPublicEndpoint.isInternetEndpoint(importEndpoint)) {
+-        final remote = await _client.fetchLedger(importEndpoint);
++      final chainHop = PercPublicEndpoint.preferredChainFetchEndpoint(
++        rendezvousUrl: await _rendezvous.baseUrl(),
++        advertised: [
++          if (importEndpoint != null) importEndpoint,
++        ],
++      );
++      if (chainHop != null) {
++        final remote = await _client.fetchLedger(chainHop);
+         if (remote != null) {
+           hub.importPeerLedger(remote, expectedTipHash: targetTip);
+           imported = true;
+@@ -1160,10 +1175,8 @@ class PercNetworkCoordinator extends ChangeNotifier {
+         .map((n) => n.endpoint!)
+         .where((e) => e != localEndpoint)
+         .toSet();
+-    final internetTargets =
+-        gossipTargets.where(PercPublicEndpoint.isInternetEndpoint).toList();
+     final targets =
+-        internetTargets.isNotEmpty ? internetTargets : gossipTargets.toList();
++        PercPublicEndpoint.chainFetchEndpoints(gossipTargets);
+ 
+     for (final endpoint in targets.take(8)) {
+       if (!_isNetworkGenerationCurrent(generation)) return;
+@@ -1236,7 +1249,7 @@ class PercNetworkCoordinator extends ChangeNotifier {
+     final endpoint = node?.endpoint;
+     if (endpoint != null &&
+         endpoint.isNotEmpty &&
+-        PercPublicEndpoint.isInternetEndpoint(endpoint)) {
++        PercPublicEndpoint.isChainFetchEndpoint(endpoint)) {
+       final remote = await _client.fetchLedger(endpoint);
+       if (remote != null) return remote;
+     }
+@@ -1985,7 +1998,7 @@ class PercNetworkCoordinator extends ChangeNotifier {
+       }
+ 
+       final endpoint = status.endpoint;
+-      if (endpoint != null && PercPublicEndpoint.isInternetEndpoint(endpoint)) {
++      if (endpoint != null && PercPublicEndpoint.isChainFetchEndpoint(endpoint)) {
+         final remote = await _client.fetchLedger(endpoint);
+         if (remote != null) {
+           _mergeRemote(remote);
+@@ -2068,6 +2081,9 @@ class PercNetworkCoordinator extends ChangeNotifier {
+     final seedEndpoint = ledger.networkNodes[PercChainConstants.seedUsername]
+         ?.endpoint;
+     if (seedEndpoint == null || seedEndpoint.isEmpty) return const [];
++    if (!PercPublicEndpoint.isChainFetchEndpoint(seedEndpoint)) {
++      return const [];
++    }
+     final status = await _client.fetchStatus(seedEndpoint);
+     if (status == null) return const [];
+     _markSeedReachableFromProbe();
+@@ -2134,10 +2150,7 @@ class PercNetworkCoordinator extends ChangeNotifier {
+       }
+     }
+ 
+-    final internetEndpoints =
+-        endpoints.where(PercPublicEndpoint.isInternetEndpoint).toList();
+-    final toProbe =
+-        internetEndpoints.isNotEmpty ? internetEndpoints : endpoints.toList();
++    final toProbe = PercPublicEndpoint.chainFetchEndpoints(endpoints);
+ 
+     for (final endpoint in toProbe) {
+       if (seen.contains(endpoint)) continue;
+@@ -2157,11 +2170,20 @@ class PercNetworkCoordinator extends ChangeNotifier {
+     if (hub == null) return 0;
+     var maxHeight = PercChainTip.height(hub.ledger);
+     for (final node in hub.ledger.networkNodes.values) {
++      if (_ignoreAdvertisedHeight(node.endpoint, node.username)) continue;
+       if (node.blockHeight > maxHeight) maxHeight = node.blockHeight;
+     }
+     for (final status in peerStatuses ?? const <PercNetworkStatus>[]) {
++      if (_ignoreAdvertisedHeight(status.endpoint, status.sessionUsername)) {
++        continue;
++      }
+       if (status.blockHeight > maxHeight) maxHeight = status.blockHeight;
+     }
+     return maxHeight;
+   }
++
++  bool _ignoreAdvertisedHeight(String? endpoint, String? username) {
++    if (username == PercChainConstants.seedUsername) return false;
++    return PercPublicEndpoint.isUnreachableCleartextPublicNode(endpoint);
++  }
+ }
+\ No newline at end of file
+diff --git a/lib/perc/services/perc_public_endpoint.dart b/lib/perc/services/perc_public_endpoint.dart
+index df75f31..9846261 100644
+--- a/lib/perc/services/perc_public_endpoint.dart
++++ b/lib/perc/services/perc_public_endpoint.dart
+@@ -32,6 +32,53 @@ class PercPublicEndpoint {
+     return !isLoopbackOrPrivateHost(uri.host);
+   }
+ 
++  /// Advertised NAT wallet node: cleartext HTTP to a public host on :9477.
++  ///
++  /// These are what this device *advertises* after a public-IP lookup. They are
++  /// not a reachable perccent chain source (Android blocks cleartext; NAT does
++  /// not forward the wallet port).
++  static bool isUnreachableCleartextPublicNode(String? endpoint) {
++    if (endpoint == null || endpoint.trim().isEmpty) return false;
++    final uri = Uri.tryParse(endpoint.trim());
++    if (uri == null || uri.host.isEmpty) return false;
++    if (uri.scheme != 'http') return false;
++    if (isLoopbackOrPrivateHost(uri.host)) return false;
++    final port = uri.hasPort ? uri.port : 80;
++    return port == PercChainConstants.defaultNodePort;
++  }
++
++  /// True when [endpoint] may be used to fetch status/ledger/tip.
++  /// HTTPS rendezvous and loopback/LAN nodes qualify; public-IP:9477 does not.
++  static bool isChainFetchEndpoint(String? endpoint) {
++    if (endpoint == null || endpoint.trim().isEmpty) return false;
++    if (isUnreachableCleartextPublicNode(endpoint)) return false;
++    final uri = Uri.tryParse(endpoint.trim());
++    if (uri == null || uri.host.isEmpty) return false;
++    if (uri.scheme == 'https') return true;
++    return isLoopbackOrPrivateHost(uri.host);
++  }
++
++  /// Prefer the HTTPS rendezvous; never return a dead cleartext :9477 hop.
++  static String? preferredChainFetchEndpoint({
++    String? rendezvousUrl,
++    Iterable<String> advertised = const [],
++  }) {
++    final rendezvous = rendezvousUrl?.trim();
++    if (rendezvous != null &&
++        rendezvous.isNotEmpty &&
++        isChainFetchEndpoint(rendezvous)) {
++      return rendezvous;
++    }
++    for (final endpoint in advertised) {
++      if (isChainFetchEndpoint(endpoint)) return endpoint;
++    }
++    return null;
++  }
++
++  /// Shipped filter used by peer probe / gossip / ledger import.
++  static List<String> chainFetchEndpoints(Iterable<String> endpoints) =>
++      endpoints.where(isChainFetchEndpoint).toList(growable: false);
++
+   Future<String?> resolveInternetEndpoint({required int port}) async {
+     final config = await PercNetworkConfig.load();
+     final override = config.publicEndpointOverride.trim();
+diff --git a/test/perc_public_endpoint_test.dart b/test/perc_public_endpoint_test.dart
+index 7549879..fcdf17f 100644
+--- a/test/perc_public_endpoint_test.dart
++++ b/test/perc_public_endpoint_test.dart
+@@ -21,4 +21,23 @@ void main() {
+       isFalse,
+     );
+   });
++
++  test('rejects cleartext public :9477 as a chain hop', () {
++    expect(
++      PercPublicEndpoint.isUnreachableCleartextPublicNode(
++        'http://217.142.21.226:9477',
++      ),
++      isTrue,
++    );
++    expect(
++      PercPublicEndpoint.isChainFetchEndpoint('http://217.142.21.226:9477'),
++      isFalse,
++    );
++    expect(
++      PercPublicEndpoint.isChainFetchEndpoint(
++        'https://135.181.152.10.sslip.io/perc',
++      ),
++      isTrue,
++    );
++  });
+ }
+\ No newline at end of file
+
+diff --git a/android/app/src/main/res/xml/network_security_config.xml b/android/app/src/main/res/xml/network_security_config.xml
+new file mode 100644
+--- /dev/null
++++ b/android/app/src/main/res/xml/network_security_config.xml
++++ b/android/app/src/main/res/xml/network_security_config.xml
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- Allow cleartext HTTP to the embedded Grok proxy on device loopback. -->
++<network-security-config>
++    <domain-config cleartextTrafficPermitted="true">
++        <domain includeSubdomains="false">127.0.0.1</domain>
++        <domain includeSubdomains="false">localhost</domain>
++    </domain-config>
++</network-security-config>
+
+diff --git a/test/perc_dead_9477_sync_and_loading_test.dart b/test/perc_dead_9477_sync_and_loading_test.dart
+new file mode 100644
+--- /dev/null
++++ b/test/perc_dead_9477_sync_and_loading_test.dart
++++ b/test/perc_dead_9477_sync_and_loading_test.dart
+@@ -0,0 +1,216 @@
++@Tags(['serial'])
++library perc_dead_9477_sync_and_loading_test;
++
++import 'dart:convert';
++import 'dart:io';
++
++import 'package:flutter_test/flutter_test.dart';
++import 'package:http/http.dart' as http;
++import 'package:perccent_wallet/perc/models/perc_amount.dart';
++import 'package:perccent_wallet/perc/models/perc_block.dart';
++import 'package:perccent_wallet/perc/perc_chain_constants.dart';
++import 'package:perccent_wallet/perc/providers/perc_wallet_provider.dart';
++import 'package:perccent_wallet/perc/services/perc_chain_tip.dart';
++import 'package:perccent_wallet/perc/services/perc_ledger.dart';
++import 'package:perccent_wallet/perc/services/perc_ledger_hub.dart';
++import 'package:perccent_wallet/perc/services/perc_network_client.dart';
++import 'package:perccent_wallet/perc/services/perc_network_config.dart';
++import 'package:perccent_wallet/perc/services/perc_network_coordinator.dart';
++import 'package:perccent_wallet/perc/services/perc_network_protocol.dart';
++import 'package:perccent_wallet/perc/services/perc_network_rendezvous.dart';
++import 'package:perccent_wallet/perc/services/perc_public_endpoint.dart';
++import 'package:perccent_wallet/perc/services/perc_wallet_store_memory.dart';
++
++const _dead9477 = 'http://217.142.21.226:9477';
++const _rendezvousBase = 'https://rendezvous.test/perc';
++
++final _scratch = Platform.environment['SCRATCH'] ??
++    '/var/folders/qb/tz4y4zts04z4846pbq95l6kw0000gp/T/grok-goal-5fa0907a8752/implementer';
++
++void _writeLog(String filename, String body) {
++  Directory(_scratch).createSync(recursive: true);
++  File('$_scratch${Platform.pathSeparator}$filename').writeAsStringSync(body);
++}
++
++PercLedger _tallRendezvousLedger({int extraBlocks = 8}) {
++  final seed = PercLedger.empty();
++  seed.ensureTreasuryAccount();
++  seed.setupTreasuryPassword('password12345');
++  seed.networkGenesisRevision = 2;
++  seed.launchBlockchain();
++  seed.consumeBlockchainLaunchEvent();
++  for (var i = 0; i < extraBlocks; i++) {
++    seed.blocks.add(
++      PercBlock(
++        index: seed.blocks.length,
++        timestamp: DateTime.utc(2026, 8, 15, 12, i),
++        transactions: const [],
++        treasuryEmitted: PercAmount.zero,
++        scenarioLabel: 'rendezvous tip $i',
++      ),
++    );
++  }
++  return seed;
++}
++
++class _ScriptedPercHttp extends http.BaseClient {
++  _ScriptedPercHttp(this.ledger);
++
++  final PercLedger ledger;
++  final probed = <String>[];
++
++  @override
++  Future<http.StreamedResponse> send(http.BaseRequest request) async {
++    final url = request.url.toString();
++    probed.add('${request.method} $url');
++    if (url.contains('217.142.21.226')) {
++      throw StateError('dead :9477 must not be probed: $url');
++    }
++
++    final path = request.url.path;
++    Object payload = {'ok': true};
++    if (path.endsWith('/perc/status') || path.endsWith('/status')) {
++      payload = {
++        'evolutionaryChainId': PercChainConstants.evolutionaryChainId,
++        'blockHeight': ledger.blockHeight,
++        'tipHash': PercChainTip.hash(ledger),
++        'revision': 1,
++        'networkGenesisRevision': 2,
++        'sessionUsername': PercChainConstants.seedUsername,
++        'endpoint': _rendezvousBase,
++      };
++    } else if (path.endsWith('/perc/ledger') || path.endsWith('/ledger')) {
++      if (request.method == 'GET' &&
++          request.url.queryParameters.isNotEmpty) {
++        payload = {'ledger': ledger.toJson()};
++      } else if (request.method == 'GET') {
++        payload = ledger.toJson();
++      }
++    } else if (path.contains('/rendezvous/peers')) {
++      payload = [
++        {
++          'evolutionaryChainId': PercChainConstants.evolutionaryChainId,
++          'blockHeight': 1,
++          'tipHash': 'dead-9477-tip',
++          'revision': 1,
++          'networkGenesisRevision': 2,
++          'sessionUsername': 'nat_phone',
++          'endpoint': _dead9477,
++        },
++      ];
++    }
++
++    final body = utf8.encode(jsonEncode(payload));
++    return http.StreamedResponse(
++      Stream<List<int>>.fromIterable([body]),
++      200,
++      headers: {'content-type': 'application/json'},
++    );
++  }
++}
++
++void main() {
++  late PercLedger rendezvousLedger;
++  late _ScriptedPercHttp scripted;
++
++  setUp(() {
++    PercLedgerHub.resetForTest();
++    PercNetworkConfig.resetForTest();
++    PercWalletProvider.sessionTimeoutEnabled = true;
++    rendezvousLedger = _tallRendezvousLedger();
++    scripted = _ScriptedPercHttp(rendezvousLedger);
++    PercNetworkConfig.setCachedForTest(
++      const PercNetworkConfig(
++        rendezvousUrl: _rendezvousBase,
++        seedUsername: PercChainConstants.seedUsername,
++        networkGenesisRevision: 2,
++        publicEndpointOverride: '',
++        publicIpLookupUrls: [],
++      ),
++    );
++  });
++
++  tearDown(() async {
++    PercNetworkCoordinator.disableLiveNodesForTests = true;
++    PercNetworkConfig.resetForTest();
++    PercLedgerHub.resetForTest();
++    PercWalletProvider.sessionTimeoutEnabled = true;
++  });
++
++  test('MY PERC adopts rendezvous tip and ignores dead public-ip:9477',
++      () async {
++    final tip = PercChainTip.height(rendezvousLedger);
++    final hop = PercPublicEndpoint.preferredChainFetchEndpoint(
++      rendezvousUrl: _rendezvousBase,
++      advertised: const [_dead9477],
++    )!;
++    expect(hop, _rendezvousBase);
++
++    final shipped = PercNetworkClient(client: scripted);
++    expect(await shipped.fetchLedger(_dead9477), isNull);
++
++    PercNetworkCoordinator.disableLiveNodesForTests = false;
++    PercNetworkCoordinator.instance.useHttpStackForTest(
++      client: PercNetworkClient(client: scripted),
++      rendezvous: PercNetworkRendezvous(client: scripted),
++    );
++
++    final store = PercWalletStoreMemory();
++    await PercLedgerHub.instance.initialize(store);
++    final hub = PercLedgerHub.instance;
++    hub.ledger.ensureTreasuryAccount();
++    hub.ledger.setupTreasuryPassword('password12345');
++    hub.ledger.networkGenesisRevision = 2;
++    hub.ledger.updatePeerFromStatus(
++      const PercNetworkStatus(
++        evolutionaryChainId: PercChainConstants.evolutionaryChainId,
++        blockHeight: 1,
++        tipHash: 'dead-9477-tip',
++        revision: 1,
++        networkGenesisRevision: 2,
++        sessionUsername: 'nat_phone',
++        endpoint: _dead9477,
++      ),
++      online: true,
++    );
++
++    final localBefore = PercChainTip.height(hub.ledger);
++    await hub.network.forceSyncWalletToSeed();
++    final after = PercChainTip.height(hub.ledger);
++    _writeLog(
++      'sibling-sync.log',
++      'app=git/MY-PERC\n'
++      'deadPeer=$_dead9477\n'
++      'rendezvous=$_rendezvousBase\n'
++      'localBefore=$localBefore\n'
++      'localAfter=$after\n'
++      'rendezvousTip=$tip\n'
++      'probedDead9477=${scripted.probed.any((u) => u.contains('217.142.21.226'))}\n',
++    );
++    expect(after, tip);
++    expect(
++      scripted.probed.any((u) => u.contains('217.142.21.226')),
++      isFalse,
++    );
++  });
++
++  test('MY PERC post-register connect completes fast with dead :9477',
++      () async {
++    PercNetworkCoordinator.disableLiveNodesForTests = false;
++    PercWalletProvider.sessionTimeoutEnabled = true;
++    PercNetworkCoordinator.instance.useHttpStackForTest(
++      client: PercNetworkClient(client: scripted),
++      rendezvous: PercNetworkRendezvous(client: scripted),
++    );
++
++    final wallet = PercWalletProvider(store: PercWalletStoreMemory());
++    await wallet.initialize();
++    await wallet.setupTreasuryPassword('password12345');
++    await wallet.register('fastuser', 'password12345');
++    final sw = Stopwatch()..start();
++    await wallet.completeRegistrationSeedSetup(enableSeed: false);
++    sw.stop();
++    expect(wallet.isWalletConnectComplete, isTrue);
++    expect(sw.elapsed, lessThan(PercChainConstants.networkRequestTimeout));
++  });
++}
